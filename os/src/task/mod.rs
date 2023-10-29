@@ -14,6 +14,8 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
+use crate::timer::get_time_us;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -101,6 +103,28 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let cur = inner.current_task;
         inner.tasks[cur].task_status = TaskStatus::Exited;
+    }
+
+	/// increase_current_syscall_count
+    fn increase_current_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+
+    /// get current TaskInfo
+    fn get_current_task_info(&self) -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        // println!("get_current_task_info {}", current);
+        let task_status = inner.tasks[current].task_status;
+        let syscall_times = inner.tasks[current].syscall_times;
+        let time = get_time_us() - inner.tasks[current].start_us;
+
+        // println!("get_current_task_info task_status {:?}", task_status);
+        // println!("get_current_task_info syscall_times {:?}", syscall_times);
+        // println!("get_current_task_info time {}", time);
+        (task_status, syscall_times, time / 1000)
     }
 
     /// Find next task to run and return task id.
@@ -201,4 +225,93 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// increase_current_syscall_count
+pub fn increase_current_syscall_count(syscall_id: usize) {
+    if syscall_id >= MAX_SYSCALL_NUM {
+        return;
+    }
+    TASK_MANAGER.increase_current_syscall_count(syscall_id);
+}
+
+/// get_current_task_info
+pub fn get_current_task_info() -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+    TASK_MANAGER.get_current_task_info()
+}
+
+use crate::mm::{VirtAddr, MapPermission};
+use crate::config::PAGE_SIZE;
+
+/// memory alloc
+pub fn memory_alloc(start: usize, len: usize, port: usize) -> isize {
+    // println!("0x{:X} {}", start, len);
+    if len == 0 {
+        return 0;
+    }
+    if (len > 1073741824) || ((port & (!0x7)) != 0) || ((port & 0x7) == 0) || ((start % 4096) != 0) {
+        return -1;
+    }
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let l: VirtAddr = start.into();
+    let r: VirtAddr = (start + len).into();
+    let lvpn = l.floor();
+    let rvpn = r.ceil();
+    // println!("L:{:?} R:{:?}", L, R);
+    for area in &inner.tasks[current].memory_set.areas {
+        // println!("{:?} {:?}", area.vpn_range.l, area.vpn_range.r);
+        if (lvpn <= area.vpn_range.get_start()) && (rvpn > area.vpn_range.get_start()) {
+            return -1;
+        }
+    }
+    let mut permission = MapPermission::from_bits((port as u8) << 1).unwrap();
+    permission.set(MapPermission::U, true);
+    // inner.tasks[current].memory_set.insert_framed_area(start.into(), (start + len).into(), permission);
+    let mut start = start;
+    let end = start + len;
+    while start < end {
+        let mut endr = start + PAGE_SIZE;
+        if endr > end {
+            endr = end;
+        }
+        inner.tasks[current].memory_set.insert_framed_area(start.into(), endr.into(), permission);
+        start = endr;
+    }
+    0
+}
+/// memory free
+pub fn memory_free(start: usize, len: usize) -> isize {
+    if len == 0 {
+        return 0;
+    }
+    if start % 4096 != 0 {
+        return -1;
+    }
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let l: VirtAddr = start.into();
+    let r: VirtAddr = (start + len).into();
+    let lvpn = l.floor();
+    let rvpn = r.ceil();
+    let mut cnt = 0;
+    for area in &inner.tasks[current].memory_set.areas {
+        if (lvpn <= area.vpn_range.get_start()) && (rvpn > area.vpn_range.get_start()) {
+            cnt += 1;
+        }
+    }
+    if cnt < rvpn.0-lvpn.0 {
+        return -1;
+    }
+    for i in 0..inner.tasks[current].memory_set.areas.len() {
+        let memory_set = &mut inner.tasks[current].memory_set;
+        if !memory_set.areas.get(i).is_some() {
+            continue;
+        }
+        if (lvpn <= memory_set.areas[i].vpn_range.get_start()) && (rvpn > memory_set.areas[i].vpn_range.get_start()) {
+            memory_set.areas[i].unmap(&mut memory_set.page_table);
+            memory_set.areas.remove(i);
+        }
+    }
+    0
 }
