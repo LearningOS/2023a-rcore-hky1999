@@ -1,6 +1,7 @@
 //!Implementation of [`TaskManager`]
 use super::TaskControlBlock;
 use crate::sync::UPSafeCell;
+use crate::config::BIG_STRIDE;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -19,6 +20,18 @@ impl TaskManager {
     }
     /// Add process back to ready queue
     pub fn add(&mut self, task: Arc<TaskControlBlock>) {
+		let stride = task.inner_exclusive_access().task_stride;
+		let len = self.ready_queue.len();
+        for queue in 0..len {
+            let task1 = self.ready_queue.get_mut(queue).unwrap();
+            let stride1 = task1.inner_exclusive_access().task_stride;
+            if (stride < stride1 && ((stride1 - stride) <= (BIG_STRIDE / 2)))
+                || (stride > stride1 && ((stride - stride1) > (BIG_STRIDE / 2)))
+            {
+                self.ready_queue.insert(queue, task);
+                return;
+            }
+        }
         self.ready_queue.push_back(task);
     }
     /// Take a process out of the ready queue

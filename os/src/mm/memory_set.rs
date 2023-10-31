@@ -300,10 +300,75 @@ impl MemorySet {
             false
         }
     }
+
+    fn check_overlap(&self, start: usize, len: usize) -> bool {
+        let l: VirtAddr = start.into();
+        let r: VirtAddr = (start + len).into();
+        let lvpn = l.floor();
+        let rvpn = r.ceil();
+        for area in &self.areas {
+            // println!("{:?} {:?}", area.vpn_range.l, area.vpn_range.r);
+            if (lvpn <= area.vpn_range.get_start()) && (rvpn > area.vpn_range.get_start()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+	/// memory_alloc
+    pub fn memory_alloc(&mut self, start: usize, len: usize, port: usize) -> bool {
+        if self.check_overlap(start, len) {
+            return false;
+        }
+
+        let mut permission = MapPermission::from_bits((port as u8) << 1).unwrap();
+        permission.set(MapPermission::U, true);
+        // inner.tasks[current].memory_set.insert_framed_area(start.into(), (start + len).into(), permission);
+        let mut start = start;
+        let end = start + len;
+        while start < end {
+            let mut endr = start + PAGE_SIZE;
+            if endr > end {
+                endr = end;
+            }
+            self.insert_framed_area(start.into(), endr.into(), permission);
+            start = endr;
+        }
+		true
+    }
+
+	/// memory_free
+    pub fn memory_free(&mut self, start: usize, len: usize) -> bool {
+        let l: VirtAddr = start.into();
+        let r: VirtAddr = (start + len).into();
+        let lvpn = l.floor();
+        let rvpn = r.ceil();
+        let mut cnt = 0;
+        for area in &self.areas {
+            if (lvpn <= area.vpn_range.get_start()) && (rvpn > area.vpn_range.get_start()) {
+                cnt += 1;
+            }
+        }
+        if cnt < rvpn.0 - lvpn.0 {
+            return false;
+        }
+        for i in 0..self.areas.len() {
+            if !self.areas.get(i).is_some() {
+                continue;
+            }
+            if (lvpn <= self.areas[i].vpn_range.get_start())
+                && (rvpn > self.areas[i].vpn_range.get_start())
+            {
+                self.areas[i].unmap(&mut self.page_table);
+                self.areas.remove(i);
+            }
+        }
+        true
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
-    vpn_range: VPNRange,
+    pub vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,

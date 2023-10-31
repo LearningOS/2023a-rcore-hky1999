@@ -1,7 +1,9 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+use crate::config::MAX_SYSCALL_NUM;
 use crate::config::TRAP_CONTEXT_BASE;
+use crate::timer::get_time_us;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -68,6 +70,18 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Syscall_times
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// First ms,
+    pub start_ms: usize,
+
+    /// Priority
+    pub task_priority: usize,
+
+    /// stride
+    pub task_stride: usize,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +132,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_ms: get_time_us() / 1000,
+                    task_priority: 16,
+                    task_stride: 0,
                 })
             },
         };
@@ -191,6 +209,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_ms: get_time_us() / 1000,
+					task_priority: parent_inner.task_priority,
+                    task_stride: parent_inner.task_stride,
                 })
             },
         });
@@ -206,14 +228,14 @@ impl TaskControlBlock {
         // ---- release parent PCB
     }
 
-	/// spawn
+    /// spawn
     pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
         // ---- access parent PCB exclusively
         let mut parent_inner = self.inner_exclusive_access();
 
-		let task_control_block = Arc::new(TaskControlBlock::new(elf_data));
+        let task_control_block = Arc::new(TaskControlBlock::new(elf_data));
 
-		// add child
+        // add child
         parent_inner.children.push(task_control_block.clone());
 
         // return
