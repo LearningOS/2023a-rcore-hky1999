@@ -79,7 +79,11 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+    trace!(
+        "kernel::pid[{}] sys_waitpid [{}]",
+        current_task().unwrap().pid.0,
+        pid
+    );
     let task = current_task().unwrap();
     // find a child process
 
@@ -164,14 +168,45 @@ pub fn sys_sbrk(size: i32) -> isize {
     }
 }
 
+// use crate::task::TaskControlBlock;
+
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_spawn(path: *const u8) -> isize {
+    trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
+
+	// let token = current_user_token();
+    // let path = translated_str(token, path);
+    // return if let Some(data) = get_app_data_by_name(path.as_str()) {
+    //     let new_task: Arc<TaskControlBlock> = Arc::new(TaskControlBlock::new(data));
+    //     let mut new_inner = new_task.inner_exclusive_access();
+    //     let parent = current_task().unwrap();
+    //     let mut parent_inner = parent.inner_exclusive_access();
+    //     new_inner.parent = Some(Arc::downgrade(&parent));
+    //     parent_inner.children.push(new_task.clone());
+    //     drop(new_inner);
+    //     drop(parent_inner);
+    //     let new_pid = new_task.pid.0;
+    //     add_task(new_task);
+    //     new_pid as isize
+    // } else {
+    //     -1
+    // };
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let task = current_task().unwrap();
+        let new_task = task.spawn(data);
+        let new_pid = new_task.pid.0;
+
+        // let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+
+        // trap_cx.x[10] = 0;
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.

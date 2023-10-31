@@ -3,6 +3,7 @@ TARGET := riscv64gc-unknown-none-elf
 MODE := release
 KERNEL_ELF := target/$(TARGET)/$(MODE)/os
 KERNEL_BIN := $(KERNEL_ELF).bin
+KERNEL_ASM := $(KERNEL_ELF).asm
 DISASM_TMP := target/$(TARGET)/$(MODE)/asm
 
 # BOARD
@@ -27,7 +28,7 @@ TEST ?= $(CHAPTER)
 BASE ?= 1
 
 # Disassembly
-DISASM ?= -x
+DISASM ?= --demangle -d
 
 # Run usertests or usershell
 TEST ?=
@@ -42,6 +43,7 @@ env:
 
 $(KERNEL_BIN): kernel
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
+	@$(OBJDUMP) $(DISASM) $(KERNEL_ELF) > $(KERNEL_ASM)
 
 kernel:
 	@make -C ../user build TEST=$(TEST) CHAPTER=$(CHAPTER) BASE=$(BASE)
@@ -78,6 +80,6 @@ gdbserver: build
 	@qemu-system-riscv64 -machine virt -nographic -bios $(BOOTLOADER) -device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA) -s -S
 
 gdbclient:
-	@riscv64-unknown-elf-gdb -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'
+	@gdb-multiarch -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'
 
 .PHONY: build env kernel clean disasm disasm-vim run-inner gdbserver gdbclient
